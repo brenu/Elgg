@@ -11,7 +11,7 @@ use Elgg\Exceptions\InvalidArgumentException;
  * @group UnitTests
  * @group UserCapabilities
  */
-class UserCapabilitiesUnitTest extends UnitTestCase {
+class UserCapabilitiesIntegrationTest extends IntegrationTestCase {
 
 	/**
 	 * @var PluginHooksService
@@ -330,20 +330,21 @@ class UserCapabilitiesUnitTest extends UnitTestCase {
 	}
 
 	public function testDefaultCanCommentPermissions() {
-
+		_elgg_services()->hooks->registerHandler('container_logic_check', 'all', \Elgg\Comments\ContainerLogicHandler::class);
+		
 		$viewer = $this->createUser();
 
 		$owner = $this->createUser();
 		$group = $this->createGroup([
-			'owner_guid', $owner->guid,
+			'owner_guid' => $owner->guid,
 		]);
 
 		$object = $this->createObject([
-			'owner_guid', $owner->guid,
+			'owner_guid' => $owner->guid,
 		]);
 
 		$entity = $this->getMockBuilder(ElggEntity::class)
-			->setMethods(['__get', 'getDisplayName', 'setDisplayName']) // keep origin canComment method
+			->setMethods(['__get', 'getDisplayName', 'setDisplayName', 'getSubtype', 'getType']) // keep origin canComment method
 			->disableOriginalConstructor()
 			->getMock();
 
@@ -352,17 +353,34 @@ class UserCapabilitiesUnitTest extends UnitTestCase {
 			->will($this->returnValueMap([
 				['owner_guid', $owner->guid]
 			]));
+		$entity->expects($this->any())
+			->method('getSubtype')
+			->will($this->returnValue('foo'));
+		$entity->expects($this->any())
+			->method('getType')
+			->will($this->returnValue('object'));
+
+		$this->assertFalse($owner->canComment());
+		$this->assertFalse($object->canComment());
+		$this->assertFalse($group->canComment());
+		$this->assertFalse($entity->canComment());
 
 		$this->assertFalse($owner->canComment($owner->guid));
 		$this->assertTrue($object->canComment($owner->guid));
 		$this->assertFalse($group->canComment($owner->guid));
-		$this->assertNull($entity->canComment($owner->guid));
+		$this->assertTrue($entity->canComment($owner->guid));
 
 		$this->assertFalse($owner->canComment($viewer->guid));
-		$this->assertTrue($object->canComment($viewer->guid));
+		$this->assertFalse($object->canComment($viewer->guid));
+		$this->assertFalse($entity->canComment($viewer->guid));
 		$this->assertFalse($group->canComment($viewer->guid));
-		$this->assertNull($entity->canComment($viewer->guid));
-
+		
+		// make sure hook is registered
+		_elgg_services()->hooks->registerHandler('container_permissions_check', 'object', \Elgg\Comments\ContainerPermissionsHandler::class);
+		$this->assertTrue($object->canComment($viewer->guid));
+		$this->assertTrue($entity->canComment($viewer->guid));
+		_elgg_services()->hooks->unregisterHandler('container_permissions_check', 'object', \Elgg\Comments\ContainerPermissionsHandler::class);
+		
 		// can pass default value
 		$this->assertTrue($object->canComment($viewer->guid, true));
 		$this->assertFalse($object->canComment($viewer->guid, false));
@@ -397,7 +415,7 @@ class UserCapabilitiesUnitTest extends UnitTestCase {
 			$this->assertEquals($entity, $hook->getEntityParam());
 			$this->assertEquals($owner, $hook->getUserParam());
 			$this->assertEquals('object', $hook->getType());
-			$this->assertNull($hook->getValue()); // called from ElggObject, no default value
+			$this->assertIsBool($hook->getValue()); // called from ElggObject, no default value
 			return false;
 		});
 
